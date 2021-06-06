@@ -1,0 +1,198 @@
+---
+title: "Wuhan - projekt"
+author: "Jarosław Szymendera"
+date: "`r format(Sys.Date(), format='%d-%m-%Y')`"
+output:
+  html_document:
+    toc: yes
+    toc_float: yes
+    theme: spacelab
+    number_sections: yes
+  word_document:
+    toc: yes
+  pdf_document:
+    toc: yes
+---
+
+```{r setup, include=FALSE}
+library("openxlsx")
+library(ggplot2)
+library(dplyr)
+library(plotly)
+library(repr)
+library(corrplot)
+library(tidyr)
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+knitr::opts_chunk$set(warning = FALSE)
+```
+# Wstęp
+
+Celem projektu była analiza próbek krwi pacjentów przyjętych do szpitala Wuhan.\
+Zakrez profektu obejmował załadowanie danych, ich wstępną obróbkę, analizę statystyczną zbioru danych z przykłądową wizualizacją, analizę korelacji atrybutów oraz stworzenie klasyfikatora przewidującego przeżycie lub zgon pacjenta.
+
+## Użyte pakiety
+
+Użyte w projekcie pakiety zaprezentowane zostały na poniższej liście:
+```{r packages, include=TRUE}
+(.packages())
+```
+## Dane źródłowe
+
+Zbiorem wejściowym był arkusz XLS zawierający wyniki badań próbek krwi od pacjentów przyjętych do szpitala w Wuhan.
+
+### Załadowanie danych
+
+Do załadowania danych wykorzystano funkcję **read.xlsx** z biblioteki **openxlsx**:
+```{r loadData_1, echo=TRUE}
+wuhan <- read.xlsx(xlsxFile = "M:\\Studia\\Hurtownie\\R\\Projekt\\wuhan_blood_sample_data_Jan_Feb_2020.xlsx", fillMergedCells = TRUE, colNames = TRUE)
+```
+
+Było to konieczne ze względu na fakt, że kolumna oznaczająca numer pacjenta była scalona dla wszystkich wierszy danego pacjenta.
+Należało zatem znaleźć sposób na załadowanie danych z rozpropagowaniem numeru pacjenta na poszczególne wiersze.
+
+Po załadowaniu danych wykonano następujące czynności:<br />
+- dokonano zmiany nazw kolumn opisujących pacjenta, pozostawiono oryginalne nazwy kolumn opisujących parametry krwi<br />
+- dodano kolumny **Przyjęcie** i **Zwolnienie** oraz przekształcono pola daty<br />
+- dodano kolumnę **liczbaDniPobytu**<br />
+- usunięto kolumny: **RE_DATE**, **Admission.time** i **Discharge.time**<br />
+```{r loadData_2, echo=FALSE}
+wuhan <- wuhan[-2] %>% rename(ID_Pacjenta = PATIENT_ID, Wiek = age, Plec = gender, Zgon = outcome) %>% mutate(Przyjecie = as.Date(Admission.time, origin = "1900-01-01"), Zwolnienie = as.Date(Discharge.time, origin = "1900-01-01"), liczbaDniPobytu = as.integer(Discharge.time-Admission.time)) %>% select(-c(4,5))
+```
+### Statystyki danych
+Zbiór zawierał **`r length(wuhan$ID_Pacjenta)`** próbek krwi, pobranych od **`r length(unique(wuhan$ID_Pacjenta))`** pacjentów.
+
+Wiek pacjentów kształtował się w przedziale od **`r min(wuhan$Wiek)`** do **`r max(wuhan$Wiek)`** lat.
+
+Przyjęcia pacjentów do szpitala odbywały się w okresie: od **`r min(wuhan$Przyjecie)`** do **`r max(wuhan$Przyjecie)`**.
+
+Zwolnienia pacjentów ze szpitala miały miejsce w okresie: od **`r min(wuhan$Zwolnienie)`** do **`r max(wuhan$Zwolnienie)`**.
+
+Najdłuższy odnotowany pobyt pacjenta w szpitalu wynosił **`r max(wuhan$liczbaDniPobytu)`** dni.
+
+Rozkład wieku pacjentów w podziale na osoby, które przeżyły i zmarły przedstawia poniższy histogram:
+```{r histWiek, echo=FALSE}
+#pogrupowanie zbioru po atrybucie ID_Pacjenta
+wuhan_wg_pacjenta <- group_by(wuhan, ID_Pacjenta)
+#wyliczenie agregatów dla grup czyli poszczególnych pacjentów, dotyczących wieku i faktu przeżycia lub nie
+wuhan_agr_wiek = wuhan_wg_pacjenta %>% summarize(wiek = mean(Wiek), zgon = min(Zgon))
+#zmiana wartości na opisowe w celu łatwiejszej prezentacji legendy wykresu
+wuhan_agr_wiek$zgon[wuhan_agr_wiek$zgon=="1"] <- "zmarł"
+wuhan_agr_wiek$zgon[wuhan_agr_wiek$zgon=="0"] <- "przeżył"
+#narysowanie wykresu
+ggplot(wuhan_agr_wiek, aes(x=wiek, fill=as.factor(zgon))) + geom_histogram() + labs(x="Wiek", y="Liczba pacjentów")  + scale_fill_manual(name="", values = c("blue", "darkblue")) 
+```
+Stwierdzono, że najliczniejszą grupę pacjentów stanowiły osoby w wieku z przedziału 60-70 lat.<br />
+Zauważono ponadto, że pobyt w szpitalu dla pacjentów w wieku >70, znacznie znacznie częściej kończył się śmiercią, niż dla młodszych pacjentów.
+
+Poniższy interaktywny wykres przedstawia dodatkowo rozkład liczby przyjęć do szpitala i zwolnień ze szpitala w poszczególnych dniach:
+```{r przyj_i_zwol, include=TRUE, fig.width=7.3}
+#wyliczenie agregatów dla grup czyli poszczególnych pacjentów, dotyczących dat przyjęcia i zwolnienia ze szpitala
+dniPobytu <- summarise(wuhan_wg_pacjenta, Przyjecie = as.character(min(Przyjecie)), Zwolnienie = as.character(min(Zwolnienie)))
+#utworzenie dwóch nowych dataframe zawierających informacje o przyjęciach i zwolnieniach w poszczególnch dniach
+dfPrzyjecia = count(dniPobytu, Przyjecie) %>% rename(Data = Przyjecie, Przyjecia = n)
+dfZwolnienia = count(dniPobytu, Zwolnienie) %>% rename(Data = Zwolnienie, Zwolnienia = n)
+#złączenie w/w dwóch dataframe w jeden
+joined_df = merge(dfPrzyjecia, dfZwolnienia, by="Data", all = TRUE)
+#przypisanie wartości 0 dla braku przyjęć/zwolnień danego dnia
+joined_df[is.na(joined_df)] <- 0
+#przekształcenie w zbiór uporządkowany
+tidy_df = gather(joined_df, "Typ", "Wartosc", Przyjecia:Zwolnienia)
+#stworzenie wykresu z dwoma seriami danych
+wykresInteraktywny <- ggplot(tidy_df, aes(x=as.Date(Data),y=Wartosc,col=Typ)) + geom_line() + theme(legend.position = "top",legend.text = element_text(size = 11), axis.text.x = element_text(size = 8, angle = 90, vjust = 0.5, hjust=1)) + xlab("Data") +ylab("Liczba pacjentów") + scale_x_date(date_labels = "%Y-%m-%d", date_breaks  ="1 day") + scale_color_manual(values=c('darkgreen','darkblue')) + labs(color = "")
+#wyświetlenie interaktywnego wykresu z dodatkowym ustawieniem pozycji legendy
+ggplotly(wykresInteraktywny) %>% layout(legend = list(orientation = "h"))
+```
+Widoczny spadek liczby przyjęć w dniach 08-10.02.2020 może wynikać z faktu, że był to weekend (sobota-poniedziałek).
+
+## Korelacje danych
+
+W celu znalezienia korelacji zbiór danych zagregowano w/g atrybutu **ID_Pacjenta**.
+Podczas agregowania danych wyznaczono wartości parametrów krwi jako maksimalne wartości dla danego pacjenta.
+Powtórzone obliczenia bazujące na wartościach minimalnych lub średnich przyniosły identyczny wynik.
+
+Na początek sprawdzono czy istnieje znacząca korelacja liniowa (Pearsona) pomiędzy atrybutami.<br />
+W analizie pominięto kolumny dotyczące daty pobrania próbki, daty przyjęcia do szpitala i daty zwolnienia ze szpitala.<br />
+Odfiltrowano również korelacje atrybutów nie powiązane z atrybutem Zgon.<br />
+Jako próg minimalny współczynnika korelacji przyjęto wartość 0.5.<br />
+Obliczony współczynnik Pearsona według przyjętych założeń przedstawia się następująco:
+
+```{r Pearson}
+#stworzenie sparametryzowanej funkcji, którą będzie można wielokrotnie wywoływać
+corr_custom <- function(metoda, prog, agregat){
+  #agregacja danych
+  wuhan_by_patient <- aggregate(wuhan[, c(2:78, 81)], list(wuhan$ID_Pacjenta), agregat, na.rm = TRUE)  
+  #do wyszukania korelacji pominięto kolumnę z ID pacjenta
+  data = wuhan_by_patient[-c(1)]
+  #obliczenie korelacji
+  corr <- cor(data, method = metoda)
+  #usunięcie duplikatów w macierzy
+  corr[lower.tri(corr,diag=TRUE)] <- NA 
+  #usunięcie korelacji = 1
+  corr[corr == 1] <- NA
+  #przekształcenie w tabelę o zdefiniowanych nazwach kolumn
+  corr <- as.data.frame(as.table(corr))
+  colnames(corr) = c('Atrybut1', 'Atrybut2', 'Wspolczynnik')
+  #usunięcie wartości NA
+  corr <- na.omit(corr) 
+  #usunicie korelacji <= próg
+  corr <- subset(corr, abs(Wspolczynnik) > prog) 
+  #fitrowanie tylko korelacji z atrybutem Zgon i sortowanie od największych
+  corr <- corr[order(-abs(corr$Wspolczynnik)),] %>% filter(Atrybut1 == "Zgon" | Atrybut2 == "Zgon")
+  return(corr)
+}
+#wywołanie funkcji i wyświetlenie wyniku
+wynik_cor <- corr_custom(metoda = "pearson", prog = 0.5, agregat = max)
+print(wynik_cor)
+```
+Jedyna zależność liniowa dotyczy związku wieku pacjenta z faktem przeżycia lub śmierci.<br />
+Otrzymana wartość potwierdza zależność, którą stwierdzono obserwując histogram wieku pacjentów.<br />
+
+Następnie wyznaczono współczynnik Spearmana pomiędzy atrybutami, wskazujący na zależność monotoniczną.
+Przyjęto podobne założenia jak dla obliczania współczynnika Pearsona, jednak próg minimalny współczynnika korelacji zwiększono do wartości 0.6 ze względu na dużą liczbę znalezionych korelacji i czytelniejszą prezentację wyniku.<br />
+Wyznaczone współczynniki korelacji Spearmana dla funkcji agregującej "maksimum" przedstawiają się następująco:
+```{r Spearman_max}
+#wywołanie funkcji i wyświetlenie wyniku w postaci graficznej
+wynik_cor <- corr_custom(metoda = "spearman", prog = 0.6, agregat = max)
+mtx_corr <- reshape2::acast(wynik_cor, Atrybut1~Atrybut2, value.var="Wspolczynnik")
+corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ", method = "number")
+```
+
+Wyznaczone współczynniki korelacji Spearmana dla funkcji agregującej "minimum" przedstawiają się następująco:
+```{r Spearman_min}
+#wywołanie funkcji i wyświetlenie wyniku w postaci graficznej
+wynik_cor <- corr_custom(metoda = "spearman", prog = 0.6, agregat = min)
+mtx_corr <- reshape2::acast(wynik_cor, Atrybut1~Atrybut2, value.var="Wspolczynnik")
+corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ", method = "number")
+```
+
+W zależności od przyjętej funkcji agregującej, największe wartości współczynnika odnotowano dla:
+**(%)lymphocyte**\
+**Lactate.dehydrogenase**\
+w przypadku funkcji "maksimum",
+oraz\
+**Lactate.dehydrogenase**\
+**High.sensitivity.C-reactive.protein**\
+w przypadku funkcji "minimum".
+
+Obserwacja ta jest zgodna z tezami autorów artykułu: 
+https://www.nature.com/articles/s42256-020-0180-7
+w którym pojawiają się stwierdzenia:\
+"Hence, the number of key features was set to the following three: lactic dehydrogenase (LDH), lymphocytes and high-sensitivity C-reactive protein (hs-CRP)."\
+oraz\
+"Table 3 further emphasizes the importance of LDH as a crucial biomarker for patient mortality rate."
+
+Autorzy określili 3 parametry krwi **(%)lymphocyte**, **Lactate.dehydrogenase**, **High.sensitivity.C-reactive.protein** jako kluczowe przy określaniu szansy przeżycia pacjenta, z wiodącą rolą **Lactate.dehydrogenase**.
+
+<!---
+próbowałem stworzyć klasyfikator RandomForest, niestety pojawiały się błędy przy wywołaniu funkcji "train" wynikające z tego, że zbiór zagregowany w/g pacjenta zawierał wartości NA (ew. NaN, Inf - w zależności od funkcji agregującej).
+
+#set.seed(23)
+#wuhan_do_ML <- aggregate(wuhan[, c(2:78)], list(wuhan$ID_Pacjenta), max, na.rm = TRUE)
+#wuhan_do_ML <- wuhan_do_ML[-1]
+#inTraining <- createDataPartition(y=wuhan_do_ML$Zgon, p = 0.75, list = FALSE)
+#training <- wuhan_do_ML[inTraining,]
+#testing <- wuhan_do_ML[-inTraining,]
+#ctrl <- trainControl(method = "repeatedcv", number = 2, repeats = 5)
+#fit <- train(Zgon ~ ., data = training, method = "rf", preProc = c("range"), trControl = ctrl, ntree=10)
+-->
