@@ -82,6 +82,7 @@ wuhan_agr_wiek$zgon[wuhan_agr_wiek$zgon=="0"] <- "przeżył"
 #narysowanie wykresu
 ggplot(wuhan_agr_wiek, aes(x=wiek, fill=as.factor(zgon))) + geom_histogram() + labs(x="Wiek", y="Liczba pacjentów")  + scale_fill_manual(name="", values = c("blue", "darkblue")) 
 ```
+<br />
 Stwierdzono, że najliczniejszą grupę pacjentów stanowiły osoby w wieku z przedziału 60-70 lat.<br />
 Zauważono ponadto, że pobyt w szpitalu dla pacjentów w wieku >70, znacznie znacznie częściej kończył się śmiercią, niż dla młodszych pacjentów.
 
