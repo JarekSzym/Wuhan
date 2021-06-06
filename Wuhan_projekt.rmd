@@ -167,7 +167,7 @@ mtx_corr <- reshape2::acast(wynik_cor, Atrybut1~Atrybut2, value.var="Wspolczynni
 corrplot(mtx_corr, is.corr=FALSE, tl.col="black", na.label=" ", method = "number")
 ```
 
-W zależności od przyjętej funkcji agregującej, największe wartości współczynnika odnotowano dla:
+W zależności od przyjętej funkcji agregującej, największe wartości współczynnika odnotowano dla:\
 **(%)lymphocyte**\
 **Lactate.dehydrogenase**\
 w przypadku funkcji "maksimum",
